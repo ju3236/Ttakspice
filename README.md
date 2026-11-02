@@ -37,9 +37,17 @@ GitHub Pages(Settings → Pages → main 브랜치)를 켜면 링크 하나로 �
 | `src/data/config.js` | 조직/시설 이름, 위험 등급 체계, 작업 종류, 직원 이름, 밸런스 수치 |
 | `docs/WORLDBUILDING.md` | 세계관 설정 정리용 문서 (게임에는 영향 없음) |
 
-### 이미지 넣기
+### 직원 꾸미기 (게임 안에서)
 
-- 직원: `assets/staff/` 에 PNG 넣고 `config.js` 의 `STAFF_ROSTER` 에 `{ name: "이름", image: "assets/staff/파일.png" }` 추가
+- 직원을 선택 → 오른쪽 패널 **✎ 꾸미기**: 이름, 이미지, 이름표 색, 메모 변경
+- 하루 끝 **직원 채용**: 채용 전에 이름·이미지를 정하고 능력치를 다시 뽑을 수 있음
+- **업로드** 버튼으로 이미지를 바로 올릴 수 있음. 투명 여백은 자동으로 잘림
+- 업로드한 이미지는 **그 브라우저에만** 저장됨 (새 게임을 해도 남아 있음). 친구도 보게 하려면 아래처럼 저장소에 넣기
+
+### 이미지 넣기 (저장소에 고정)
+
+- 직원 편집 화면의 기본 이미지 목록: `config.js` 의 `STAFF_IMAGE_PRESETS` 에 경로 추가
+- 처음부터 등장하는 고정 직원: `assets/staff/` 에 PNG 넣고 `config.js` 의 `STAFF_ROSTER` 에 `{ name: "이름", image: "assets/staff/파일.png" }` 추가
 - 개체: `assets/entities/` 에 PNG 넣고 `entities.js` 의 개체에 `image: "assets/entities/파일.png"` 추가
 - 이미지가 없으면 기본 이미지(`assets/staff/default.png`, `assets/entities/placeholder.png`) 사용
 - **투명 배경 PNG**, 캐릭터 주변 여백은 잘라내기 (발이 이미지 맨 아래에 닿게)

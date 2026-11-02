@@ -35,6 +35,8 @@ export function makeStaff(state) {
     id: nextStaffId++,
     name: preset?.name ?? (free.length ? pick(free) : `직원 ${nextStaffId}`),
     image: preset?.image ?? null,
+    color: preset?.color ?? null,
+    memo: preset?.memo ?? "",
     stats: { grit: randInt(1, 3), calm: randInt(1, 3), focus: randInt(1, 3), agility: randInt(1, 3) },
     status: "idle",
     task: null,
@@ -431,13 +433,27 @@ export function startNextDay(state) {
   log(state, `${state.day}일차 업무를 시작합니다.`, "info");
 }
 
-export function hire(state) {
+export function canHire(state) {
   const alive = state.staff.filter((s) => s.status !== "dead");
-  if (state.currency < BALANCE.hireCost || alive.length >= BALANCE.maxStaff) return false;
+  return state.currency >= BALANCE.hireCost && alive.length < BALANCE.maxStaff;
+}
+
+/** 채용 후보 생성 (아직 고용 안 함). 편집 화면에서 꾸민 뒤 hireStaff 로 확정 */
+export function rollStaff(state) { return makeStaff(state); }
+
+export function hireStaff(state, s) {
+  if (!canHire(state)) return false;
   state.currency -= BALANCE.hireCost;
-  const s = makeStaff(state);
   state.staff.push(s);
   log(state, `신규 직원 ${s.name} 채용.`, "info");
+  return true;
+}
+
+/** 이름/이미지/이름표 색/메모 수정 */
+export function editStaff(state, staffId, patch) {
+  const s = state.staff.find((x) => x.id === staffId);
+  if (!s) return false;
+  for (const k of ["name", "image", "color", "memo"]) if (k in patch) s[k] = patch[k];
   return true;
 }
 

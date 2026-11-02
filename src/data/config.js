@@ -50,8 +50,16 @@ export const BALANCE = {
 export const DEFAULT_STAFF_IMAGE = "assets/staff/default.png";
 export const DEFAULT_ENTITY_IMAGE = "assets/entities/placeholder.png";
 
+// 직원 편집 화면에서 고를 수 있는 기본 이미지들 (게임 안에서 업로드한 이미지는 따로 추가됨)
+export const STAFF_IMAGE_PRESETS = [
+  "assets/staff/default.png",
+];
+
+// 이름표 색 선택지
+export const NAMETAG_COLORS = ["#5fd4c4", "#4b93ea", "#9b7bea", "#e86fa6", "#ef5a45", "#f2b33d", "#5fd48a", "#c9ced6"];
+
 // 고정 직원 캐릭터. 여기 적은 순서대로 먼저 등장하고, 다 쓰면 아래 STAFF_NAMES 에서 랜덤 이름.
-// 예: { name: "냥이", image: "assets/staff/nyang.png" }
+// 예: { name: "냥이", image: "assets/staff/nyang.png", color: "#e86fa6", memo: "고양이 귀" }
 export const STAFF_ROSTER = [
   // { name: "캐릭터 이름", image: "assets/staff/파일이름.png" },
 ];

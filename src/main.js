@@ -3,19 +3,23 @@ import * as G from "./game.js";
 import * as L from "./layout.js";
 import {
   BALANCE, GRADES, STAT_LABELS, WORK_TYPES, WORLD, DEFAULT_STAFF_IMAGE, DEFAULT_ENTITY_IMAGE,
+  STAFF_IMAGE_PRESETS, NAMETAG_COLORS,
 } from "./data/config.js";
+import { resolveImage, listImages, addImageFromFile, deleteImage } from "./images.js";
 import { TRAITS } from "./data/entities.js";
 
 let state = G.load() ?? G.newGame();
-const ui = { staff: null, cell: null, doc: null };
+const ui = { staff: null, cell: null, doc: null, edit: null };
+// ui.edit = { mode: "edit" | "hire", staffId, cand, draft: {name, image, color, memo}, prevSpeed, error }
 let lastPhase = null;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const pct = (v, max) => `${Math.max(0, Math.min(100, (v / max) * 100))}%`;
 const fmtTime = (t) => { const r = Math.max(0, BALANCE.timePerDay - t); return `${Math.floor(r / 60)}:${String(Math.floor(r % 60)).padStart(2, "0")}`; };
-const staffImg = (s) => s.image || DEFAULT_STAFF_IMAGE;
-const entImg = (e) => e.image || DEFAULT_ENTITY_IMAGE;
+const staffImg = (s) => resolveImage(s.image, DEFAULT_STAFF_IMAGE);
+const entImg = (e) => resolveImage(e.image, DEFAULT_ENTITY_IMAGE);
+const tagColor = (s) => s.color || "";
 const PREF_LABEL = { high: "높음", mid: "보통", low: "낮음", none: "최악" };
 const STATUS_LABEL = { idle: "대기", working: "작업 중", fighting: "진압 중", bound: "구속됨", panic: "패닉", dead: "사망" };
 const REVEAL_PREFS_AT = 2;
@@ -145,6 +149,10 @@ function renderActors() {
     const ico = { working: s.task?.phase === "work" ? "🔧" : "", fighting: "⚔", panic: "‼", bound: "⛓" }[s.status] ?? "";
     setHTML(el.querySelector(".ico"), ico);
     setHTML(el.querySelector(".nm"), esc(s.name));
+    const src = staffImg(s);
+    const body = el.querySelector(".body");
+    if (body._src !== src) { body._src = src; body.src = src; }
+    el.style.setProperty("--tag", tagColor(s) || "#000b");
     el.querySelector(".hp i").style.width = pct(s.hp, G.maxHp(s));
     el.querySelector(".san i").style.width = pct(s.san, G.maxSan(s));
   }
@@ -217,7 +225,7 @@ function renderRoster() {
   setHTML($("roster"), state.staff.map((s) => `
     <div class="rs st-${s.status}${ui.staff === s.id ? " sel" : ""}" data-act="staff" data-id="${s.id}">
       <div class="face"><img src="${esc(staffImg(s))}" alt=""></div>
-      <div class="nm">${esc(s.name)}</div><div class="st">${STATUS_LABEL[s.status]}</div>
+      <div class="nm" style="color:${esc(tagColor(s) || "inherit")}">${esc(s.name)}</div><div class="st">${STATUS_LABEL[s.status]}</div>
       <div class="bar hp"><i style="width:${pct(s.hp, G.maxHp(s))}"></i></div>
       <div class="bar san"><i style="width:${pct(s.san, G.maxSan(s))}"></i></div>
     </div>`).join(""));
@@ -279,11 +287,13 @@ function staffPanel(s) {
   if (s.task?.kind === "work") task = `${G.getEntity(state.cells[s.task.cellIdx].entityId).code} ${WORK_TYPES[s.task.workType].label} ${s.task.phase === "move" ? "(이동 중)" : `${s.task.done}/${s.task.units}`}`;
   if (s.task?.kind === "fight") task = `${G.getEntity(state.cells[s.task.cellIdx].entityId).name} 진압 중`;
   return `<div class="ph"><div class="portrait face"><img src="${esc(staffImg(s))}" alt=""></div>
-      <div><div class="sub">직원 #${s.id}</div><h3>${esc(s.name)}</h3><div class="sub">${esc(task)}</div><div class="sub">작업 ${s.works}회</div></div>
+      <div><div class="sub">직원 #${s.id}</div><h3 style="color:${esc(tagColor(s) || "inherit")}">${esc(s.name)}</h3><div class="sub">${esc(task)}</div><div class="sub">작업 ${s.works}회</div>
+        ${s.status !== "dead" ? `<button data-act="editStaff" data-id="${s.id}" style="margin-top:8px;padding:3px 10px">✎ 꾸미기</button>` : ""}</div>
       <button class="x" data-act="close">✕</button></div>
     <div class="sec">
       <div class="vbar"><span>체력</span><div class="bar hp"><i style="width:${pct(s.hp, G.maxHp(s))}"></i></div><span>${Math.ceil(s.hp)}/${G.maxHp(s)}</span></div>
       <div class="vbar"><span>정신력</span><div class="bar san"><i style="width:${pct(s.san, G.maxSan(s))}"></i></div><span>${Math.ceil(s.san)}/${G.maxSan(s)}</span></div></div>
+    ${s.memo ? `<div class="sec"><h4>메모</h4><div style="white-space:pre-wrap">${esc(s.memo)}</div></div>` : ""}
     <div class="sec"><h4>능력치</h4><div class="stats">
       ${Object.keys(STAT_LABELS).map((k) => `<div title="${esc(STAT_LABELS[k])}"><span>${esc(STAT_LABELS[k].split(" ")[0])}</span><b>${st[k]}</b></div>`).join("")}</div></div>
     ${s.status === "fighting" ? `<div class="sec"><button data-act="recall" data-id="${s.id}" style="width:100%">후퇴</button></div>` : ""}
@@ -303,9 +313,65 @@ function renderPanel() {
   setHTML(p, html);
 }
 
+function editorHTML() {
+  const ed = ui.edit;
+  const d = ed.draft;
+  const s = ed.mode === "hire" ? ed.cand : state.staff.find((x) => x.id === ed.staffId);
+  const uploads = listImages();
+  const imgs = [...STAFF_IMAGE_PRESETS, ...uploads];
+  const gallery = imgs.map((ref) => `<div class="gi${(d.image || DEFAULT_STAFF_IMAGE) === ref ? " on" : ""}">
+      <button data-act="edImg" data-ref="${esc(ref)}"><img src="${esc(resolveImage(ref, DEFAULT_STAFF_IMAGE))}" alt=""></button>
+      ${ref.startsWith("img:") ? `<button class="del" data-act="edDel" data-ref="${esc(ref)}" title="보관함에서 삭제">✕</button>` : ""}</div>`).join("");
+  const colors = ["", ...NAMETAG_COLORS].map((c) => `<button class="sw${(d.color || "") === c ? " on" : ""}" data-act="edColor" data-c="${c}"
+      style="background:${c || "#000b"}" title="${c ? c : "기본"}"></button>`).join("");
+  const stats = Object.keys(STAT_LABELS).map((k) => `<div><span>${esc(STAT_LABELS[k].split(" ")[0])}</span><b>${s.stats[k]}</b></div>`).join("");
+  return `<div class="dialog editor">
+    <h1>${ed.mode === "hire" ? "신규 직원 채용" : "직원 꾸미기"}</h1>
+    <div class="ed-grid">
+      <div class="ed-prev">
+        <div class="stage"><span class="nm" style="--tag:${esc(d.color || "#000b")}">${esc(d.name || "이름 없음")}</span>
+          <img src="${esc(resolveImage(d.image, DEFAULT_STAFF_IMAGE))}" alt=""></div>
+        <div class="stats">${stats}</div>
+        ${ed.mode === "hire" ? `<button data-act="edReroll" style="width:100%;margin-top:8px">능력치 다시 뽑기</button>` : ""}
+      </div>
+      <div>
+        <label class="fl">이름<input id="ed-name" maxlength="12" value="${esc(d.name)}" autocomplete="off"></label>
+        <h2>이미지</h2>
+        <div class="gallery">${gallery}
+          <label class="gi up" title="이미지 올리기">＋<br><small>업로드</small><input id="ed-file" type="file" accept="image/*" hidden></label></div>
+        <p class="hint">투명 배경 PNG 추천. 여백은 자동으로 잘라줌. 올린 이미지는 이 브라우저에 보관됨.</p>
+        ${ed.error ? `<p class="err">${esc(ed.error)}</p>` : ""}
+        <h2>이름표 색</h2><div class="swatches">${colors}</div>
+        <label class="fl">메모<textarea id="ed-memo" rows="3" maxlength="200" placeholder="설정, 성격, 특징 등">${esc(d.memo)}</textarea></label>
+      </div>
+    </div>
+    <div class="ed-btns">
+      <button data-act="edCancel">취소</button>
+      <button class="on" data-act="edSave">${ed.mode === "hire" ? `채용 (${BALANCE.hireCost})` : "저장"}</button>
+    </div></div>`;
+}
+
+function openEditor(mode, s) {
+  ui.edit = {
+    mode, staffId: s.id, cand: mode === "hire" ? s : null,
+    draft: { name: s.name, image: s.image, color: s.color, memo: s.memo || "" },
+    prevSpeed: state.speed, error: "",
+  };
+  if (state.phase === "day") state.speed = 0;
+  renderModal();
+}
+function closeEditor() {
+  if (state.phase === "day") state.speed = ui.edit.prevSpeed;
+  ui.edit = null;
+  renderModal();
+}
+
 function renderModal() {
   const m = $("modal");
-  if (state.phase === "gameover") {
+  if (ui.edit && state.phase !== "gameover") {
+    m.hidden = false;
+    setHTML(m, editorHTML());
+  } else if (state.phase === "gameover") {
     m.hidden = false;
     setHTML(m, `<div class="dialog"><h1>시설 폐쇄</h1><p>${esc(state.gameOverReason)}</p>
       <p>${state.day}일차까지 버텼습니다. 격리 개체 ${state.cells.length}종.</p>
@@ -319,7 +385,7 @@ function renderModal() {
         <b>${esc(e.name)}</b><div style="font-size:12px;color:var(--muted)">${esc(e.docs[0]?.text ?? "")}</div></span></button>`;
     }).join("");
     const alive = state.staff.filter((s) => s.status !== "dead");
-    const upg = alive.map((s) => `<div class="upg"><span>${esc(s.name)}</span>${Object.keys(STAT_LABELS).map((k) =>
+    const upg = alive.map((s) => `<div class="upg"><span><button data-act="editStaff" data-id="${s.id}" title="꾸미기" style="padding:2px 6px">✎</button> ${esc(s.name)}</span>${Object.keys(STAT_LABELS).map((k) =>
       `<button data-act="upgrade" data-id="${s.id}" data-stat="${k}" title="${esc(STAT_LABELS[k])}"
         ${state.currency < BALANCE.statUpCost(s.stats[k]) || s.stats[k] >= 10 ? "disabled" : ""}>
         ${STAT_LABELS[k][0]}${s.stats[k]}↑ (${BALANCE.statUpCost(s.stats[k])})</button>`).join("")}</div>`).join("");
@@ -327,7 +393,7 @@ function renderModal() {
       <p>보유 ${esc(WORLD.currencyName)}: <b>${state.currency}</b></p>
       ${choices ? `<h2>신규 수용 개체 선택</h2><div class="choices">${choices}</div>` : `<p style="color:var(--muted)">${state.pool.length ? "개체를 수용했습니다." : "더 이상 수용할 개체가 없습니다."}</p>`}
       <h2>직원 관리</h2>${upg}
-      <p><button data-act="hire" ${state.currency < BALANCE.hireCost || alive.length >= BALANCE.maxStaff ? "disabled" : ""}>직원 채용 (${BALANCE.hireCost})</button></p>
+      <p><button data-act="hire" ${G.canHire(state) ? "" : "disabled"}>직원 채용 (${BALANCE.hireCost})</button></p>
       <p><button data-act="nextDay" ${choices ? "disabled title='먼저 개체를 선택하세요'" : ""}>다음 날 시작 ▶</button></p></div>`);
   } else if (ui.doc != null) {
     const c = state.cells[ui.doc]; const e = G.getEntity(c.entityId); const g = GRADES[e.grade];
@@ -386,7 +452,32 @@ function act(el) {
     case "closeDoc": ui.doc = null; renderModal(); break;
     case "endDay": if (G.canEndDay(state)) { G.endDay(state); G.save(state); } break;
     case "choose": G.chooseEntity(state, el.dataset.id); G.save(state); renderModal(); break;
-    case "hire": G.hire(state); renderModal(); break;
+    case "hire": if (G.canHire(state)) openEditor("hire", G.rollStaff(state)); break;
+    case "editStaff": { const s = state.staff.find((x) => x.id === id); if (s) openEditor("edit", s); break; }
+    case "edImg": ui.edit.draft.image = el.dataset.ref === DEFAULT_STAFF_IMAGE ? null : el.dataset.ref; renderModal(); break;
+    case "edDel":
+      if (confirm("이 이미지를 보관함에서 지울까요? 이 이미지를 쓰는 직원은 기본 이미지로 바뀝니다.")) {
+        deleteImage(el.dataset.ref);
+        if (ui.edit.draft.image === el.dataset.ref) ui.edit.draft.image = null;
+        renderModal();
+      }
+      break;
+    case "edColor": ui.edit.draft.color = el.dataset.c || null; renderModal(); break;
+    case "edReroll": {
+      const c = G.rollStaff(state);
+      ui.edit.cand.stats = c.stats; ui.edit.cand.hp = c.hp; ui.edit.cand.san = c.san;
+      renderModal(); break;
+    }
+    case "edCancel": closeEditor(); break;
+    case "edSave": {
+      const ed = ui.edit;
+      const d = { ...ed.draft, name: ed.draft.name.trim() || "이름 없음" };
+      if (ed.mode === "hire") { Object.assign(ed.cand, d); G.hireStaff(state, ed.cand); }
+      else G.editStaff(state, ed.staffId, d);
+      G.save(state);
+      closeEditor();
+      break;
+    }
     case "upgrade": G.upgradeStat(state, id, el.dataset.stat); renderModal(); break;
     case "nextDay": G.startNextDay(state); G.save(state); break;
     case "restart":
@@ -448,11 +539,28 @@ document.addEventListener("pointercancel", endPointer);
 vp.addEventListener("wheel", (ev) => { ev.preventDefault(); zoomAt(ev.deltaY < 0 ? 1.1 : 1 / 1.1, ev.clientX, ev.clientY); }, { passive: false });
 addEventListener("resize", fitCam);
 
+// 편집기 입력칸
+document.addEventListener("input", (ev) => {
+  if (!ui.edit) return;
+  if (ev.target.id === "ed-name") ui.edit.draft.name = ev.target.value;
+  if (ev.target.id === "ed-memo") ui.edit.draft.memo = ev.target.value;
+});
+document.addEventListener("change", async (ev) => {
+  if (ev.target.id !== "ed-file" || !ui.edit) return;
+  const file = ev.target.files?.[0];
+  if (!file) return;
+  try { ui.edit.draft.image = await addImageFromFile(file); ui.edit.error = ""; }
+  catch (e) { ui.edit.error = e.message; }
+  renderModal();
+});
+
 document.addEventListener("keydown", (ev) => {
+  if (ev.target.closest?.("input, textarea")) return;
   if (ev.key === " ") { ev.preventDefault(); state.speed = state.speed === 0 ? 1 : 0; }
   if (["1", "2", "3"].includes(ev.key)) state.speed = Number(ev.key);
   if (ev.key === "Escape") {
-    if (ui.doc != null) { ui.doc = null; renderModal(); } else { ui.cell = null; ui.staff = null; }
+    if (ui.edit) closeEditor();
+    else if (ui.doc != null) { ui.doc = null; renderModal(); } else { ui.cell = null; ui.staff = null; }
   }
 });
 
