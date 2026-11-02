@@ -45,6 +45,17 @@ export const BALANCE = {
   timePerDay: 300,          // 하루 제한 시간(게임 초)
 };
 
+// ===== 이미지 =====
+// 투명 배경 PNG 권장. 캐릭터 주변 여백은 최대한 잘라낼 것 (발이 이미지 맨 아래에 오도록).
+export const DEFAULT_STAFF_IMAGE = "assets/staff/default.png";
+export const DEFAULT_ENTITY_IMAGE = "assets/entities/placeholder.png";
+
+// 고정 직원 캐릭터. 여기 적은 순서대로 먼저 등장하고, 다 쓰면 아래 STAFF_NAMES 에서 랜덤 이름.
+// 예: { name: "냥이", image: "assets/staff/nyang.png" }
+export const STAFF_ROSTER = [
+  // { name: "캐릭터 이름", image: "assets/staff/파일이름.png" },
+];
+
 export const STAFF_NAMES = [
   "한서윤", "도건우", "김하람", "이준", "박새벽", "최다온", "윤이든", "정로아",
   "강태오", "오세린", "임채운", "신우주", "배하늘", "류시안", "문가을", "남궁별",

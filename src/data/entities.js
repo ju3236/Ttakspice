@@ -13,6 +13,7 @@
 //  prefs        : 작업 종류별 선호도 (high/mid/low/none)
 //  breach       : 탈출 시 전투 능력 { hp, attack, interval(초) }
 //  traits       : 특수 규칙 (아래 'TRAITS' 참고, 선택)
+//  image        : 이미지 경로 (선택, 없으면 config.js 의 DEFAULT_ENTITY_IMAGE)
 //  docs         : 연구 단계별로 공개되는 문서. 작업 횟수가 need 이상이면 해금
 //  flavor       : 작업 결과별 대사(선택)
 
