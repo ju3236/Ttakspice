@@ -1,0 +1,85 @@
+:root {
+  --bg: #0f1114;
+  --panel: #181b20;
+  --panel2: #20242b;
+  --line: #2d323a;
+  --text: #d9dde3;
+  --muted: #8a919c;
+  --accent: #e0b341;
+  --good: #4fbf7a;
+  --bad: #e0573f;
+  --alert: #ff3b3b;
+  --hp: #d0503c;
+  --san: #4a8fe0;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: "Pretendard", "Noto Sans KR", system-ui, sans-serif; font-size: 14px;
+  user-select: none;
+}
+button {
+  font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .4; cursor: default; }
+button.on { background: var(--accent); color: #111; }
+h2 { font-size: 13px; color: var(--muted); margin: 14px 0 6px; letter-spacing: .05em; }
+
+#topbar {
+  display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5;
+}
+#topbar .title { font-weight: 700; color: var(--accent); }
+#topbar .grow { flex: 1; min-width: 160px; }
+.bar { height: 8px; background: #000; border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+.bar.hp > i { background: var(--hp); }
+.bar.san > i { background: var(--san); }
+.bar.prog > i { background: var(--good); }
+
+main { display: grid; grid-template-columns: 1fr 320px; gap: 16px; padding: 16px; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+
+#cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; align-content: start; }
+.cell { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--grade); border-radius: 8px; padding: 12px; }
+.cell.breached { border-color: var(--alert); animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { box-shadow: 0 0 18px #ff3b3b66; } }
+.cell header { display: flex; justify-content: space-between; gap: 8px; }
+.cell .code { color: var(--muted); font-size: 12px; }
+.cell .name { font-weight: 700; margin: 2px 0 8px; }
+.pips { display: flex; gap: 4px; margin: 6px 0; }
+.pips i { width: 16px; height: 6px; border-radius: 2px; background: #333; }
+.pips i.f { background: var(--good); }
+.pips.low i.f { background: var(--bad); }
+.works { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.works small { display: block; color: var(--muted); font-size: 11px; }
+.cell .status { font-size: 12px; color: var(--muted); min-height: 1.4em; }
+
+.staff { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; }
+.staff.sel { border-color: var(--accent); }
+.staff.dead { opacity: .35; cursor: default; }
+.staff .row { display: flex; justify-content: space-between; }
+.staff .st { color: var(--muted); font-size: 12px; }
+.staff .bar { margin-top: 4px; height: 5px; }
+
+#log { list-style: none; padding: 0; margin: 0; max-height: 40vh; overflow: auto; font-size: 12px; }
+#log li { padding: 3px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
+#log li.good { color: var(--good); }
+#log li.bad { color: var(--bad); }
+#log li.alert { color: var(--alert); font-weight: 700; }
+#log li.info { color: var(--accent); }
+
+#modal {
+  position: fixed; inset: 0; background: #000b; display: grid; place-items: center; z-index: 10; padding: 16px;
+}
+#modal[hidden] { display: none; }
+.dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; width: min(720px, 100%); max-height: 90vh; overflow: auto; }
+.dialog h1 { margin-top: 0; font-size: 20px; }
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.choice { text-align: left; border-left: 4px solid var(--grade); }
+.upg { display: grid; grid-template-columns: 1fr repeat(4, auto); gap: 6px; align-items: center; margin: 4px 0; }
+.doc p { border-left: 2px solid var(--line); padding-left: 10px; }
+.doc p.locked { color: var(--muted); font-style: italic; }
