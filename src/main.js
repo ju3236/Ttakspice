@@ -38,9 +38,21 @@ function fitCam() {
   const narrow = innerWidth < 860;
   const w = innerWidth - (narrow ? 20 : 40);
   const h = innerHeight - (narrow ? 260 : 200);
-  cam.s = Math.max(0.3, Math.min(1.2, w / lay.width, h / lay.height));
+  // 좁은 화면에서는 가로를 다 넣으면 글씨가 안 보이므로 세로 기준으로 맞추고 가로는 드래그로 이동
+  cam.s = narrow
+    ? Math.max(0.4, Math.min(0.56, h / lay.height))
+    : Math.max(0.3, Math.min(1.2, w / lay.width, h / lay.height));
   cam.x = (innerWidth - lay.width * cam.s) / 2;
-  cam.y = (narrow ? 130 : 110) + Math.max(0, (h - lay.height * cam.s) / 2);
+  if (narrow) {
+    // 본부와 사용 중인 격리실이 함께 보이도록 가로 중심을 잡음
+    const xs = [lay.main.x, lay.main.x + lay.main.w];
+    state.cells.forEach((_, i) => { const r = lay.rooms[i]; if (r) xs.push(r.x, r.x + r.w); });
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    cam.x = (x1 - x0) * cam.s <= innerWidth - 24
+      ? innerWidth / 2 - ((x0 + x1) / 2) * cam.s
+      : 12 - x0 * cam.s;
+  }
+  cam.y = (narrow ? 112 : 110) + Math.max(0, (h - lay.height * cam.s) / 2);
   applyCam();
 }
 function zoomAt(f, px, py) {
@@ -90,7 +102,7 @@ function renderRooms() {
     if (!c) {
       if (el.dataset.ent) { delete el.dataset.ent; delete el.dataset.act; el._h = null; }
       el.className = "room empty";
-      setHTML(el, `<div class="plate">빈 격리실 · ${String(slot + 1).padStart(2, "0")}</div>`);
+      setHTML(el, `<div class="seal"><b>봉인 구획</b><span>C-${String(slot + 1).padStart(2, "0")}</span></div>`);
       return;
     }
     const e = G.getEntity(c.entityId);
@@ -103,21 +115,23 @@ function renderRooms() {
       el.style.setProperty("--grade", g.color);
       el.innerHTML = `<div class="glass"></div>
         <img class="ent" src="${esc(entImg(e))}" alt="" style="left:${L.entitySpot(room).x - room.x}px">
-        <div class="plate"><span class="code">${esc(e.code)}</span><span>${esc(e.name)}</span><span class="gr">${esc(g.label)}</span></div>
-        <div class="gauge"></div><div class="rstat"></div>`;
+        <div class="plate"><span class="code">${esc(e.code)}</span><span class="rn">${esc(e.name)}</span><span class="gr">${esc(g.label)}</span></div>
+        <div class="rfoot"><span class="stab"></span><span class="rstat"></span></div><div class="rprog"><i></i></div>`;
       el._h = null;
     }
     const worker = state.staff.find((s) => s.id === c.busy);
     el.className = `room${c.breached ? " breached" : ""}${worker?.task?.phase === "work" ? " busy" : ""}${ui.cell === slot ? " sel" : ""}`;
     el.querySelector(".ent").style.visibility = c.breached ? "hidden" : "";
-    const gauge = el.querySelector(".gauge");
-    gauge.className = `gauge${c.stability <= 1 ? " low" : ""}`;
-    setHTML(gauge, Array.from({ length: e.stability }, (_, k) => `<i class="${e.stability - k <= c.stability ? "f" : ""}"></i>`).join(""));
+    const stab = el.querySelector(".stab");
+    stab.className = `stab${c.stability <= 1 ? " low" : ""}`;
+    setHTML(stab, `<em>안정</em>${Array.from({ length: e.stability }, (_, k) => `<i class="${k < c.stability ? "f" : ""}"></i>`).join("")}`);
     let st = "";
-    if (c.breached) st = "⚠ 격리 실패";
-    else if (worker?.task?.phase === "work") st = `${WORK_TYPES[worker.task.workType].label} ${worker.task.done}/${worker.task.units}`;
+    const t = worker?.task;
+    if (c.breached) st = "격리 실패";
+    else if (t?.phase === "work") st = `${WORK_TYPES[t.workType].label} ${t.done}/${t.units}`;
     else if (worker) st = `${worker.name} 이동 중`;
     setHTML(el.querySelector(".rstat"), esc(st));
+    el.querySelector(".rprog i").style.width = t?.phase === "work" ? pct(t.done, t.units) : "0%";
   });
 }
 
@@ -146,8 +160,10 @@ function renderActors() {
     el.style.transform = `translate(${s.x - w / 2}px, ${L.feetY(s.fy) - STAFF_H}px)`;
     el.style.zIndex = s.status === "dead" ? 1 : 3;
     el.className = `actor staff ${s.status}${s.moving ? " walk" : ""}${s.dir < 0 ? " flip" : ""}${ui.staff === s.id ? " sel" : ""}`;
-    const ico = { working: s.task?.phase === "work" ? "🔧" : "", fighting: "⚔", panic: "‼", bound: "⛓" }[s.status] ?? "";
-    setHTML(el.querySelector(".ico"), ico);
+    const ico = { working: s.task?.phase === "work" ? "작업" : "", fighting: "진압", panic: "패닉", bound: "구속" }[s.status] ?? "";
+    const icoEl = el.querySelector(".ico");
+    icoEl.hidden = !ico;
+    setHTML(icoEl, ico);
     setHTML(el.querySelector(".nm"), esc(s.name));
     const src = staffImg(s);
     const body = el.querySelector(".body");
@@ -196,27 +212,30 @@ function renderFx() {
 function renderHud() {
   const done = state.dayData >= state.quota;
   const breaches = state.cells.filter((c) => c.breached).length;
-  setHTML($("hud"), `<div class="box" style="padding:10px 12px">
-    <div class="top"><span class="day">${state.day}일차</span><span class="org">${esc(WORLD.organizationName)} · ${esc(WORLD.facilityName)}</span></div>
-    <div class="quota"><span>${esc(WORLD.currencyName)} 할당량</span><span><b>${state.dayData}</b> / ${state.quota}</span></div>
-    <div class="bar ${done ? "done" : ""}"><i style="width:${pct(state.dayData, state.quota)}"></i></div>
-    <div class="row"><span>남은 시간 <b>${fmtTime(state.time)}</b></span><span>보유 <b>${state.currency}</b></span>
-      ${breaches ? `<span class="alarm">⚠ 격리 실패 ${breaches} / ${BALANCE.breachLimit}</span>` : ""}</div></div>`);
-  $("hud").style.padding = "0";
+  const left = BALANCE.timePerDay - state.time;
+  const canEnd = G.canEndDay(state);
+  setHTML($("hud"), `
+    <div class="top"><span class="day">${state.day}일차</span><span class="org">${esc(WORLD.organizationName)} · ${esc(WORLD.facilityName)}</span>
+      <span class="clock${left < 60 && !done ? " urgent" : ""}" title="남은 업무 시간">${fmtTime(state.time)}</span></div>
+    <div class="quota"><span class="ql">${esc(WORLD.currencyName)}</span><span class="qv"><b>${state.dayData}</b><small>/ ${state.quota}</small></span></div>
+    <div class="qbar ${done ? "done" : ""}"><i style="width:${pct(state.dayData, state.quota)}"></i></div>
+    <div class="row"><span>보유 <b>${state.currency}</b></span>
+      ${breaches ? `<span class="alarm">격리 실패 ${breaches}/${BALANCE.breachLimit}</span>` : ""}
+      <button class="end${canEnd ? " ready" : ""}" data-act="endDay" ${canEnd ? "" : "disabled"}
+        title="${done && !canEnd ? "탈출한 개체를 먼저 진압해야 합니다" : ""}">${done ? "업무 종료" : `${Math.max(0, state.quota - state.dayData)} 남음`}</button></div>`);
+  $("hud").className = "ui box";
 }
 
 function renderControls() {
   const sp = [[0, "❚❚"], [1, "▶"], [2, "▶▶"], [3, "▶▶▶"]].map(([v, t]) =>
     `<button data-act="speed" data-v="${v}" class="${state.speed === v ? "on" : ""}">${t}</button>`).join("");
-  setHTML($("controls"), `${sp}<span class="sp"></span>
-    <button class="zm" data-act="zoom" data-v="0.8">－</button><button data-act="fit" title="화면 맞춤">⤢</button><button class="zm" data-act="zoom" data-v="1.25">＋</button>
-    <button data-act="endDay" ${G.canEndDay(state) ? "" : "disabled"}>업무 종료</button>
-    <button data-act="restart" title="새 게임">↺</button>`);
-  $("controls").className = "box";
+  setHTML($("controls"), `<span class="seg" role="group" aria-label="속도">${sp}</span><span class="sp"></span>
+    <span class="seg" role="group" aria-label="화면"><button class="zm" data-act="zoom" data-v="0.8" aria-label="축소">－</button><button data-act="fit" aria-label="화면 맞춤">맞춤</button><button class="zm" data-act="zoom" data-v="1.25" aria-label="확대">＋</button></span>
+    <button class="ghost" data-act="restart">새 게임</button>`);
 }
 
 function renderLog() {
-  $("logbox").className = "box";
+  $("bottom").className = "ui box";
   setHTML($("log"), state.log.slice(0, 30).map((l) => `<li class="${l.kind}">${esc(l.text)}</li>`).join(""));
 }
 
@@ -263,9 +282,12 @@ function cellPanel(i) {
     const chips = idle.map((s) => `<button data-act="pick" data-id="${s.id}" class="${sel?.id === s.id ? "on" : ""}">${esc(s.name)}</button>`).join("");
     const who = sel ?? idle[0];
     const works = Object.entries(WORK_TYPES).map(([k, w]) => {
-      const pref = known ? PREF_LABEL[e.prefs[k] ?? "none"] : "???";
-      const chance = known && who ? ` · ${Math.round(G.successChance(who, e, k) * 100)}%` : "";
-      return `<button data-act="work" data-cell="${i}" data-w="${k}" title="${esc(w.desc)}" ${who ? "" : "disabled"}>${w.label}<small>선호 ${pref}${chance}</small></button>`;
+      const pk = e.prefs[k] ?? "none";
+      const ch = who ? Math.round(G.successChance(who, e, k) * 100) : 0;
+      return `<button class="wk${known ? ` p-${pk}` : ""}" data-act="work" data-cell="${i}" data-w="${k}" title="${esc(w.desc)}" ${who ? "" : "disabled"}>
+        <span class="wl">${w.label}</span><span class="wc">${known && who ? `${ch}%` : "??"}</span>
+        <small>${known ? `선호 ${PREF_LABEL[pk]}` : "선호 미확인"}</small>
+        <span class="wb"><i style="width:${known && who ? ch : 0}%"></i></span></button>`;
     }).join("");
     body = `<div class="sec"><h4>배정 직원</h4><div class="chips">${chips || '<span class="hint">대기 중인 직원 없음</span>'}</div>
       ${!sel && who ? `<p class="hint">선택 안 하면 ${esc(who.name)}이(가) 갑니다.</p>` : ""}</div>
@@ -385,16 +407,31 @@ function renderModal() {
         <b>${esc(e.name)}</b><div style="font-size:12px;color:var(--muted)">${esc(e.docs[0]?.text ?? "")}</div></span></button>`;
     }).join("");
     const alive = state.staff.filter((s) => s.status !== "dead");
-    const upg = alive.map((s) => `<div class="upg"><span><button data-act="editStaff" data-id="${s.id}" title="꾸미기" style="padding:2px 6px">✎</button> ${esc(s.name)}</span>${Object.keys(STAT_LABELS).map((k) =>
-      `<button data-act="upgrade" data-id="${s.id}" data-stat="${k}" title="${esc(STAT_LABELS[k])}"
-        ${state.currency < BALANCE.statUpCost(s.stats[k]) || s.stats[k] >= 10 ? "disabled" : ""}>
-        ${STAT_LABELS[k][0]}${s.stats[k]}↑ (${BALANCE.statUpCost(s.stats[k])})</button>`).join("")}</div>`).join("");
-    setHTML(m, `<div class="dialog"><h1>${state.day}일차 업무 종료</h1>
-      <p>보유 ${esc(WORLD.currencyName)}: <b>${state.currency}</b></p>
-      ${choices ? `<h2>신규 수용 개체 선택</h2><div class="choices">${choices}</div>` : `<p style="color:var(--muted)">${state.pool.length ? "개체를 수용했습니다." : "더 이상 수용할 개체가 없습니다."}</p>`}
-      <h2>직원 관리</h2>${upg}
-      <p><button data-act="hire" ${G.canHire(state) ? "" : "disabled"}>직원 채용 (${BALANCE.hireCost})</button></p>
-      <p><button data-act="nextDay" ${choices ? "disabled title='먼저 개체를 선택하세요'" : ""}>다음 날 시작 ▶</button></p></div>`);
+    const keys = Object.keys(STAT_LABELS);
+    const head = keys.map((k) => `<th title="${esc(STAT_LABELS[k])}">${esc(STAT_LABELS[k].split(" ")[0])}</th>`).join("");
+    const rows = alive.map((s) => `<tr><td class="who"><img src="${esc(staffImg(s))}" alt=""><span>${esc(s.name)}</span>
+        <button class="ghost sm" data-act="editStaff" data-id="${s.id}">꾸미기</button></td>
+      ${keys.map((k) => {
+        const cost = BALANCE.statUpCost(s.stats[k]);
+        const max = s.stats[k] >= 10;
+        return `<td><b>${s.stats[k]}</b><button class="up" data-act="upgrade" data-id="${s.id}" data-stat="${k}"
+          ${state.currency < cost || max ? "disabled" : ""} aria-label="${esc(s.name)} ${esc(STAT_LABELS[k])} 올리기">${max ? "최대" : `+ ${cost}`}</button></td>`;
+      }).join("")}</tr>`).join("");
+    const acc = ui.accepted ? G.getEntity(ui.accepted) : null;
+    const accepted = acc ? `<div class="accepted" style="--grade:${GRADES[acc.grade].color}"><img src="${esc(entImg(acc))}" alt="">
+        <span><span class="sub">수용 완료</span><b>${esc(acc.code)} ${esc(acc.name)}</b></span></div>` : "";
+    setHTML(m, `<div class="dialog dayend"><div class="dh"><h1>${state.day}일차 업무 종료</h1>
+        <span class="wallet">보유 ${esc(WORLD.currencyName)} <b>${state.currency}</b></span></div>
+      ${choices ? `<h2>신규 수용 개체 · 하나를 고르세요</h2><div class="choices">${choices}</div>`
+        : accepted || `<p class="hint">더 이상 수용할 개체가 없습니다.</p>`}
+      <h2>직원 강화</h2>
+      <div class="tbl"><table><thead><tr><th>직원</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="df">
+        <button data-act="hire" ${G.canHire(state) ? "" : "disabled"}>직원 채용 · ${BALANCE.hireCost}</button>
+        <span class="sp"></span>
+        ${choices ? `<span class="hint">개체를 고르면 시작할 수 있어요</span>` : ""}
+        <button class="primary" data-act="nextDay" ${choices ? "disabled" : ""}>${state.day + 1}일차 시작</button>
+      </div></div>`);
   } else if (ui.doc != null) {
     const c = state.cells[ui.doc]; const e = G.getEntity(c.entityId); const g = GRADES[e.grade];
     const docs = e.docs.map((d) => c.workCount >= d.need
@@ -451,7 +488,7 @@ function act(el) {
     case "doc": ui.doc = cell; renderModal(); break;
     case "closeDoc": ui.doc = null; renderModal(); break;
     case "endDay": if (G.canEndDay(state)) { G.endDay(state); G.save(state); } break;
-    case "choose": G.chooseEntity(state, el.dataset.id); G.save(state); renderModal(); break;
+    case "choose": G.chooseEntity(state, el.dataset.id); ui.accepted = el.dataset.id; G.save(state); renderModal(); break;
     case "hire": if (G.canHire(state)) openEditor("hire", G.rollStaff(state)); break;
     case "editStaff": { const s = state.staff.find((x) => x.id === id); if (s) openEditor("edit", s); break; }
     case "edImg": ui.edit.draft.image = el.dataset.ref === DEFAULT_STAFF_IMAGE ? null : el.dataset.ref; renderModal(); break;
@@ -479,7 +516,7 @@ function act(el) {
       break;
     }
     case "upgrade": G.upgradeStat(state, id, el.dataset.stat); renderModal(); break;
-    case "nextDay": G.startNextDay(state); G.save(state); break;
+    case "nextDay": G.startNextDay(state); ui.accepted = null; G.save(state); break;
     case "restart":
       if (state.phase === "gameover" || confirm("진행 상황을 지우고 새 게임을 시작할까요?")) {
         G.clearSave(); state = G.newGame(); ui.staff = ui.cell = ui.doc = null;
