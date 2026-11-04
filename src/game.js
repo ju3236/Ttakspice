@@ -41,6 +41,9 @@ export function makeStaff(state) {
     status: "idle",
     task: null,
     works: 0,
+    exp: { grit: 0, calm: 0, focus: 0, agility: 0 },
+    weapon: null,
+    suit: null,
     boundUntil: 0,
     panicUntil: 0,
     x: homeX(),
@@ -111,13 +114,23 @@ export function newGame() {
     log: [],
     events: [],
     gameOverReason: "",
+    alertStage: 0,
+    support: { ...BALANCE.support },
+    armory: [],
+    nextItemId: 1,
+    dayStats: newDayStats(),
   };
   for (let i = 0; i < BALANCE.startingStaff; i++) state.staff.push(makeStaff(state));
   const minGrade = Math.min(...ENTITIES.map((e) => e.grade));
   addEntity(state, pick(ENTITIES.filter((e) => e.grade === minGrade)).id);
   log(state, `${state.day}일차 업무를 시작합니다.`, "info");
+  banner(state, `${state.day}일차 업무 개시`, "info");
   return state;
 }
+
+const newDayStats = () => ({ works: 0, good: 0, deaths: 0, breaches: 0, alertsMissed: 0 });
+
+function banner(state, text, kind = "info") { state.events.push({ type: "banner", text, kind }); }
 
 export function addEntity(state, id) {
   state.pool = state.pool.filter((p) => p !== id);
@@ -131,6 +144,8 @@ export function addEntity(state, id) {
     breached: false,
     breachHp: 0,
     breachCooldown: 0,
+    energy: 0,        // 이 개체에서 얻은 에너지 (장비 추출에 사용)
+    alertUntil: null, // 긴급 작업 경보 마감 시각
     b: null, // 탈출 시 위치 {x, fy, dir, moving, target, retarget}
   });
 }
@@ -144,10 +159,76 @@ function fx(state, x, fy, text, kind = "") {
   state.events.push({ type: "float", x, fy, text, kind });
 }
 
+// ---------- 연구 / 장비 ----------
+export const researchMax = (e) => Math.max(1, ...e.docs.map((d) => d.need));
+export const isResearched = (cell) => cell.workCount >= researchMax(getEntity(cell.entityId));
+
+/** 개체의 장비. entities.js 에 gear 가 없으면 등급으로 자동 생성 */
+export function gearOf(e) {
+  const g = e.gear ?? {};
+  const k = e.grade;
+  const bodyMain = e.damage.type === "body";
+  return {
+    weapon: {
+      name: g.weapon?.name ?? `${e.name}의 파편`,
+      cost: g.weapon?.cost ?? 15 + k * 15,
+      atk: g.weapon?.atk ?? 1 + k * 1.5,
+    },
+    suit: {
+      name: g.suit?.name ?? `${e.name}의 외피`,
+      cost: g.suit?.cost ?? 20 + k * 15,
+      body: g.suit?.body ?? +(bodyMain ? 0.12 + k * 0.06 : 0.04 + k * 0.03).toFixed(2),
+      mind: g.suit?.mind ?? +(bodyMain ? 0.04 + k * 0.03 : 0.12 + k * 0.06).toFixed(2),
+    },
+  };
+}
+
+export const itemOf = (state, id) => state.armory.find((it) => it.id === id) ?? null;
+const resist = (state, s, type) => itemOf(state, s.suit)?.[type] ?? 0;
+export const attackPower = (state, s) => 2 + s.stats.grit * 0.8 + s.stats.agility * 0.6 + (itemOf(state, s.weapon)?.atk ?? 0) * 1.5;
+
+export function buyGear(state, cellIdx, kind) {
+  const cell = state.cells[cellIdx];
+  if (!cell) return false;
+  const e = getEntity(cell.entityId);
+  const g = gearOf(e)[kind];
+  if (cell.energy < g.cost) return false;
+  cell.energy -= g.cost;
+  state.armory.push({ id: state.nextItemId++, kind, entityId: e.id, ...g });
+  log(state, `장비 추출: ${g.name}`, "info");
+  return true;
+}
+
+export function equip(state, staffId, kind, itemId) {
+  const s = state.staff.find((x) => x.id === staffId);
+  if (!s || s.status === "dead") return false;
+  if (itemId != null) for (const o of state.staff) if (o[kind] === itemId) o[kind] = null;
+  s[kind] = itemId;
+  return true;
+}
+
+// ---------- 관리자 지원 ----------
+export function useSupport(state, kind, staffId) {
+  const s = state.staff.find((x) => x.id === staffId);
+  if (state.phase !== "day" || !s || s.status === "dead" || !(state.support[kind] > 0)) return false;
+  state.support[kind]--;
+  if (kind === "heal") {
+    s.hp = Math.min(maxHp(s), s.hp + maxHp(s) * 0.6);
+    fx(state, s.x, s.fy, "응급 치료", "good");
+  } else {
+    s.san = Math.min(maxSan(s), s.san + maxSan(s) * 0.6);
+    if (s.status === "panic") { s.status = "idle"; s.goalX = homeX(); }
+    fx(state, s.x, s.fy, "진정 처치", "san");
+  }
+  log(state, `지원 조치: ${s.name}에게 ${kind === "heal" ? "응급 치료" : "진정 처치"}`, "info");
+  return true;
+}
+
 // ---------- 행동 ----------
-export function successChance(staff, entity, workType) {
+export function successChance(staff, entity, workType, cell = null) {
   let p = PREFERENCE_CHANCE[entity.prefs[workType] ?? "none"];
   p += (staff.stats.focus - 1) * 0.03;
+  if (cell && isResearched(cell)) p += 0.05;
   if (entity.traits?.includes("mirror") && staff.san < maxSan(staff) / 2) p -= 0.25;
   return clamp(p, 0.05, 0.97);
 }
@@ -189,6 +270,12 @@ export function tick(state, dt) {
 
   const alive = state.staff.filter((s) => s.status !== "dead");
   if (!alive.length) return gameOver(state, "모든 직원이 사망했습니다.");
+  const th = BALANCE.alertThresholds;
+  while (state.alertStage < th.length && state.dayData >= state.quota * th[state.alertStage]) {
+    state.alertStage++;
+    triggerAlert(state);
+  }
+
   const breaches = state.cells.filter((c) => c.breached).length;
   if (breaches >= BALANCE.breachLimit) return gameOver(state, `동시 격리 실패 ${breaches}건. 시설이 붕괴했습니다.`);
   if (state.time >= BALANCE.timePerDay) {
@@ -234,7 +321,7 @@ function updateStaff(state, s, dt) {
     if (!near) moveTo(s, Math.round(b.fy), b.x + side * 40, dt, walkSpeed(s));
     else {
       s.dir = -side;
-      cell.breachHp -= (2 + s.stats.grit * 0.8 + s.stats.agility * 0.6) * dt;
+      cell.breachHp -= attackPower(state, s) * dt;
       if (cell.breachHp <= 0) suppressed(state, s.task.cellIdx);
     }
   }
@@ -255,10 +342,12 @@ function updateWork(state, s, dt) {
   while (t.timer >= unitTime && t.done < t.units && s.status === "working") {
     t.timer -= unitTime;
     t.done++;
-    if (Math.random() < successChance(s, e, t.workType)) {
+    const ok = Math.random() < successChance(s, e, t.workType, cell);
+    state.events.push({ type: "unit", cellIdx: t.cellIdx, ok });
+    if (ok) {
       t.success++;
     } else {
-      const dmg = randInt(e.damage.amount[0], e.damage.amount[1]);
+      const dmg = Math.max(1, Math.round(randInt(e.damage.amount[0], e.damage.amount[1]) * (1 - resist(state, s, e.damage.type))));
       if (e.damage.type === "body") s.hp -= dmg; else s.san -= dmg;
       fx(state, s.x, s.fy, `-${dmg}`, e.damage.type === "body" ? "hp" : "san");
       if (checkStaffBreak(state, s)) { finishWork(state, s, true); return; }
@@ -280,6 +369,7 @@ function checkStaffBreak(state, s) {
 
 function kill(state, s, msg) {
   s.hp = 0; s.status = "dead"; s.moving = false;
+  state.dayStats.deaths++;
   log(state, msg, "bad");
   fx(state, s.x, s.fy, "사망", "hp");
 }
@@ -294,10 +384,40 @@ function finishWork(state, s, interrupted) {
 
   state.dayData += t.success;
   state.currency += t.success;
+  cell.energy += t.success;
   cell.busy = null;
+  const wasResearched = isResearched(cell);
   cell.workCount++;
   cell.lastWorkedAt = state.time;
   s.works++;
+  state.dayStats.works++;
+  if (result === "good") state.dayStats.good++;
+  if (!wasResearched && isResearched(cell)) {
+    log(state, `${e.code} 연구 완료. 이 개체의 작업 성공률 +5%`, "good");
+    banner(state, `${e.code} 연구 완료`, "good");
+  }
+
+  // 능력치 성장: 작업 종류에 맞는 능력치 경험치
+  if (s.status === "working") {
+    const st = WORK_TYPES[t.workType].stat;
+    s.exp[st] = (s.exp[st] ?? 0) + t.success;
+    const need = BALANCE.expPerLevel(s.stats[st]);
+    if (s.stats[st] < 10 && s.exp[st] >= need) {
+      s.exp[st] -= need;
+      s.stats[st]++;
+      const lbl = { grit: "근성", calm: "침착", focus: "집중", agility: "기민" }[st];
+      fx(state, s.x, s.fy, `${lbl} +1`, "lvl");
+      log(state, `${s.name}의 ${lbl}이(가) ${s.stats[st]}(으)로 올랐습니다.`, "good");
+    }
+  }
+
+  // 긴급 작업 경보 해소
+  if (cell.alertUntil != null) {
+    cell.alertUntil = null;
+    const bonus = 5 * e.grade;
+    state.currency += bonus;
+    log(state, `${e.code} 긴급 작업 완료 (+${bonus})`, "good");
+  }
 
   const label = { good: "좋음", normal: "보통", bad: "나쁨" }[result];
   const flavor = e.flavor?.[result] ? ` ${e.flavor[result]}` : "";
@@ -325,6 +445,18 @@ function finishWork(state, s, interrupted) {
 
 function updateCell(state, cell, idx, dt) {
   const e = getEntity(cell.entityId);
+  if (!cell.breached && cell.alertUntil != null) {
+    if (cell.busy != null) cell.alertUntil += dt; // 작업하러 가는 중이면 시간 정지
+    else if (state.time >= cell.alertUntil) {
+      cell.alertUntil = null;
+      const loss = state.alertStage >= 3 ? 2 : 1;
+      cell.stability -= loss;
+      state.dayStats.alertsMissed++;
+      log(state, `${e.code} 긴급 작업 미이행. 안정도 -${loss}`, "bad");
+      fx(state, entitySpot(roomOf(idx)).x, roomOf(idx).floor, `안정도 -${loss}`, "bad");
+      if (cell.stability <= 0) { breach(state, idx); return; }
+    }
+  }
   if (!cell.breached) {
     if (e.traits?.includes("lonely") && cell.busy == null && state.time - cell.lastWorkedAt > 60) {
       cell.lastWorkedAt = state.time;
@@ -356,8 +488,9 @@ function updateCell(state, cell, idx, dt) {
   if (!inRange.length) return;
   cell.breachCooldown = e.breach.interval;
   const victim = pick(inRange);
-  victim.hp -= e.breach.attack;
-  fx(state, victim.x, victim.fy, `-${e.breach.attack}`, "hp");
+  const dmg = Math.max(1, Math.round(e.breach.attack * (1 - resist(state, victim, "body"))));
+  victim.hp -= dmg;
+  fx(state, victim.x, victim.fy, `-${dmg}`, "hp");
   if (victim.hp <= 0) {
     if (victim.task?.kind === "work") state.cells[victim.task.cellIdx].busy = null;
     victim.task = null;
@@ -367,12 +500,26 @@ function updateCell(state, cell, idx, dt) {
 
 const dist = (a, b) => Math.abs(a.fy - b.fy) * 400 + Math.abs(a.x - b.x);
 
+function triggerAlert(state) {
+  const cand = state.cells.map((c, i) => i).filter((i) => !state.cells[i].breached && state.cells[i].alertUntil == null);
+  if (!cand.length) return;
+  cand.sort(() => Math.random() - 0.5);
+  const picked = cand.slice(0, Math.min(state.alertStage, cand.length));
+  for (const i of picked) state.cells[i].alertUntil = state.time + BALANCE.alertTime;
+  const codes = picked.map((i) => getEntity(state.cells[i].entityId).code).join(", ");
+  log(state, `⚠ 긴급 작업 경보 ${state.alertStage}단계: ${codes}`, "alert");
+  banner(state, `긴급 작업 요청 · ${codes}`, "warn");
+}
+
 function breach(state, idx) {
   const cell = state.cells[idx];
   const e = getEntity(cell.entityId);
   const spot = entitySpot(roomOf(idx));
   cell.breached = true;
   cell.stability = 0;
+  cell.alertUntil = null;
+  state.dayStats.breaches++;
+  banner(state, `격리 실패 — ${e.code} ${e.name}`, "alert");
   cell.breachHp = e.breach.hp;
   cell.breachCooldown = e.breach.interval;
   cell.b = { x: spot.x, fy: spot.floor, dir: -1, moving: false, target: null, retarget: 0 };
@@ -407,7 +554,7 @@ export function endDay(state) {
     s.status = "idle"; s.task = null; s.hp = maxHp(s); s.san = maxSan(s);
     s.fy = 0; s.x = homeX(); s.goalX = null;
   }
-  for (const c of state.cells) { c.busy = null; c.breached = false; c.b = null; c.stability = Math.max(c.stability, 1); }
+  for (const c of state.cells) { c.busy = null; c.breached = false; c.b = null; c.alertUntil = null; c.stability = Math.max(c.stability, 1); }
   const bonus = Math.max(0, state.dayData - state.quota);
   log(state, `${state.day}일차 종료. 할당량 초과분 ${bonus}.`, "good");
   state.phase = "dayEnd";
@@ -429,8 +576,12 @@ export function startNextDay(state) {
   state.time = 0;
   state.choices = [];
   state.phase = "day";
+  state.alertStage = 0;
+  state.support = { ...BALANCE.support };
+  state.dayStats = newDayStats();
   for (const c of state.cells) c.lastWorkedAt = 0;
   log(state, `${state.day}일차 업무를 시작합니다.`, "info");
+  banner(state, `${state.day}일차 업무 개시`, "info");
 }
 
 export function canHire(state) {
@@ -489,6 +640,14 @@ export function load() {
     nextStaffId = data.nextStaffId ?? 100;
     delete data.nextStaffId;
     data.events = [];
+    // 예전 저장 파일 보정
+    data.alertStage ??= 0;
+    data.support ??= { ...BALANCE.support };
+    data.armory ??= [];
+    data.nextItemId ??= 1;
+    data.dayStats ??= newDayStats();
+    for (const st of data.staff) { st.exp ??= { grit: 0, calm: 0, focus: 0, agility: 0 }; st.weapon ??= null; st.suit ??= null; }
+    for (const c of data.cells) { c.energy ??= 0; c.alertUntil ??= null; }
     return data;
   } catch { return null; }
 }

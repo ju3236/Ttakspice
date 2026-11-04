@@ -115,12 +115,14 @@ function renderRooms() {
       el.style.setProperty("--grade", g.color);
       el.innerHTML = `<div class="glass"></div>
         <img class="ent" src="${esc(entImg(e))}" alt="" style="left:${L.entitySpot(room).x - room.x}px">
-        <div class="plate"><span class="code">${esc(e.code)}</span><span class="rn">${esc(e.name)}</span><span class="gr">${esc(g.label)}</span></div>
+        <div class="plate"><span class="code">${esc(e.code)}</span><span class="rn">${esc(e.name)}</span><span class="al"></span><span class="gr">${esc(g.label)}</span></div>
         <div class="rfoot"><span class="stab"></span><span class="rstat"></span></div><div class="rprog"><i></i></div>`;
       el._h = null;
     }
     const worker = state.staff.find((s) => s.id === c.busy);
-    el.className = `room${c.breached ? " breached" : ""}${worker?.task?.phase === "work" ? " busy" : ""}${ui.cell === slot ? " sel" : ""}`;
+    const alerted = c.alertUntil != null && !c.breached;
+    el.className = `room${c.breached ? " breached" : ""}${alerted ? " alerted" : ""}${worker?.task?.phase === "work" ? " busy" : ""}${ui.cell === slot ? " sel" : ""}`;
+    setHTML(el.querySelector(".al"), alerted ? `긴급 ${Math.max(0, Math.ceil(c.alertUntil - state.time))}` : "");
     el.querySelector(".ent").style.visibility = c.breached ? "hidden" : "";
     const stab = el.querySelector(".stab");
     stab.className = `stab${c.stability <= 1 ? " low" : ""}`;
@@ -197,6 +199,8 @@ function renderActors() {
 function renderFx() {
   const layer = $("fx");
   for (const ev of state.events.splice(0)) {
+    if (ev.type === "unit") { unitFx(ev); continue; }
+    if (ev.type === "banner") { showBanner(ev.text, ev.kind); continue; }
     if (ev.type !== "float") continue;
     const d = document.createElement("div");
     d.className = `float ${ev.kind}`;
@@ -208,10 +212,51 @@ function renderFx() {
   }
 }
 
+// 작업 1단위: 격리실 번쩍임 + 성공 시 데이터 큐브가 할당량 표시로 날아감
+let cubes = 0;
+function unitFx(ev) {
+  const room = roomEls[ev.cellIdx];
+  if (!room) return;
+  room.classList.remove("hit-ok", "hit-bad");
+  void room.offsetWidth;
+  room.classList.add(ev.ok ? "hit-ok" : "hit-bad");
+  if (!ev.ok || cubes > 24 || state.speed === 0) return;
+  const from = (room.querySelector(".ent") ?? room).getBoundingClientRect();
+  const to = document.querySelector("#hud .qv b")?.getBoundingClientRect();
+  if (!to || from.width === 0) return;
+  const c = document.createElement("div");
+  c.className = "cube";
+  const sx = from.left + from.width / 2 + (Math.random() - 0.5) * 30, sy = from.top + from.height * 0.4;
+  c.style.left = `${sx}px`; c.style.top = `${sy}px`;
+  document.body.appendChild(c);
+  cubes++;
+  const dx = to.left + to.width / 2 - sx, dy = to.top + to.height / 2 - sy;
+  const anim = c.animate([
+    { transform: "translate(-50%,-50%) scale(.4)", opacity: 0 },
+    { transform: `translate(calc(-50% + ${dx * 0.1}px), calc(-50% - 30px)) scale(1)`, opacity: 1, offset: 0.25 },
+    { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(.5)`, opacity: 0.9 },
+  ], { duration: 700 + Math.random() * 200, easing: "cubic-bezier(.5,0,.9,.6)" });
+  anim.onfinish = () => {
+    c.remove(); cubes--;
+    const q = document.querySelector("#hud .qv");
+    if (q) { q.classList.remove("bump"); void q.offsetWidth; q.classList.add("bump"); }
+  };
+}
+
+function showBanner(text, kind) {
+  const b = document.createElement("div");
+  b.className = `banner ${kind}`;
+  b.innerHTML = `<span>${esc(text)}</span>`;
+  document.body.appendChild(b);
+  b.addEventListener("animationend", () => b.remove());
+}
+
 // ================= UI =================
 function renderHud() {
   const done = state.dayData >= state.quota;
   const breaches = state.cells.filter((c) => c.breached).length;
+  const alerts = state.cells.filter((c) => c.alertUntil != null && !c.breached).length;
+  document.body.classList.toggle("alarm", breaches > 0 && state.phase === "day");
   const left = BALANCE.timePerDay - state.time;
   const canEnd = G.canEndDay(state);
   setHTML($("hud"), `
@@ -221,6 +266,7 @@ function renderHud() {
     <div class="qbar ${done ? "done" : ""}"><i style="width:${pct(state.dayData, state.quota)}"></i></div>
     <div class="row"><span>보유 <b>${state.currency}</b></span>
       ${breaches ? `<span class="alarm">격리 실패 ${breaches}/${BALANCE.breachLimit}</span>` : ""}
+      ${alerts && !breaches ? `<span class="warnc">긴급 ${alerts}</span>` : ""}
       <button class="end${canEnd ? " ready" : ""}" data-act="endDay" ${canEnd ? "" : "disabled"}
         title="${done && !canEnd ? "탈출한 개체를 먼저 진압해야 합니다" : ""}">${done ? "업무 종료" : `${Math.max(0, state.quota - state.dayData)} 남음`}</button></div>`);
   $("hud").className = "ui box";
@@ -283,7 +329,7 @@ function cellPanel(i) {
     const who = sel ?? idle[0];
     const works = Object.entries(WORK_TYPES).map(([k, w]) => {
       const pk = e.prefs[k] ?? "none";
-      const ch = who ? Math.round(G.successChance(who, e, k) * 100) : 0;
+      const ch = who ? Math.round(G.successChance(who, e, k, c) * 100) : 0;
       return `<button class="wk${known ? ` p-${pk}` : ""}" data-act="work" data-cell="${i}" data-w="${k}" title="${esc(w.desc)}" ${who ? "" : "disabled"}>
         <span class="wl">${w.label}</span><span class="wc">${known && who ? `${ch}%` : "??"}</span>
         <small>${known ? `선호 ${PREF_LABEL[pk]}` : "선호 미확인"}</small>
@@ -294,13 +340,23 @@ function cellPanel(i) {
       <div class="sec"><h4>작업</h4><div class="works">${works}</div>
       ${known ? "" : `<p class="hint">작업 ${REVEAL_PREFS_AT}회 후 선호도가 밝혀집니다.</p>`}</div>`;
   }
+  const rmax = G.researchMax(e);
+  const gear = G.gearOf(e);
+  const gearSec = `<div class="sec"><h4>장비 추출 <span class="en">에너지 <b>${c.energy}</b></span></h4>
+    <div class="gear">
+      <div><b>${esc(gear.weapon.name)}</b><span class="sub">무기 · 진압 공격력 +${(gear.weapon.atk * 1.5).toFixed(1)}</span></div>
+      <button data-act="buy" data-cell="${i}" data-kind="weapon" ${c.energy < gear.weapon.cost ? "disabled" : ""}>${gear.weapon.cost}</button>
+      <div><b>${esc(gear.suit.name)}</b><span class="sub">방호복 · 신체 ${Math.round(gear.suit.body * 100)}% · 정신 ${Math.round(gear.suit.mind * 100)}% 경감</span></div>
+      <button data-act="buy" data-cell="${i}" data-kind="suit" ${c.energy < gear.suit.cost ? "disabled" : ""}>${gear.suit.cost}</button>
+    </div><p class="hint">에너지는 이 개체를 작업할 때만 쌓입니다. 추출한 장비는 직원 정보에서 지급하세요.</p></div>`;
   return `<div class="ph" style="--grade:${g.color}">
       <div class="portrait"><img src="${esc(entImg(e))}" alt=""></div>
       <div><div class="sub">${esc(e.code)} · <b style="color:${g.color}">${esc(g.label)}</b></div><h3>${esc(e.name)}</h3>
-        <div class="sub">피해 ${e.damage.type === "body" ? "신체" : "정신"} · 작업 ${c.workCount}회</div>
+        <div class="sub">피해 ${e.damage.type === "body" ? "신체" : "정신"} · 연구 ${Math.min(c.workCount, rmax)}/${rmax}${G.isResearched(c) ? " · 완료(성공률 +5%)" : ""}</div>
+        ${c.alertUntil != null && !c.breached ? `<div class="alertline">긴급 작업 요청 · ${Math.max(0, Math.ceil(c.alertUntil - state.time))}초 남음</div>` : ""}
         <div class="pips">${pips}</div>
         <button data-act="doc" data-cell="${i}" style="margin-top:8px;padding:3px 10px">문서 열람</button></div>
-      <button class="x" data-act="close">✕</button></div>${body}`;
+      <button class="x" data-act="close">✕</button></div>${body}${gearSec}`;
 }
 
 function staffPanel(s) {
@@ -316,10 +372,30 @@ function staffPanel(s) {
       <div class="vbar"><span>체력</span><div class="bar hp"><i style="width:${pct(s.hp, G.maxHp(s))}"></i></div><span>${Math.ceil(s.hp)}/${G.maxHp(s)}</span></div>
       <div class="vbar"><span>정신력</span><div class="bar san"><i style="width:${pct(s.san, G.maxSan(s))}"></i></div><span>${Math.ceil(s.san)}/${G.maxSan(s)}</span></div></div>
     ${s.memo ? `<div class="sec"><h4>메모</h4><div style="white-space:pre-wrap">${esc(s.memo)}</div></div>` : ""}
-    <div class="sec"><h4>능력치</h4><div class="stats">
-      ${Object.keys(STAT_LABELS).map((k) => `<div title="${esc(STAT_LABELS[k])}"><span>${esc(STAT_LABELS[k].split(" ")[0])}</span><b>${st[k]}</b></div>`).join("")}</div></div>
+    <div class="sec"><h4>능력치 <span class="sub">작업할수록 성장</span></h4><div class="stats">
+      ${Object.keys(STAT_LABELS).map((k) => `<div class="stx" title="${esc(STAT_LABELS[k])} · 경험치 ${s.exp?.[k] ?? 0}/${BALANCE.expPerLevel(st[k])}">
+        <span>${esc(STAT_LABELS[k].split(" ")[0])}</span><b>${st[k]}</b>
+        <span class="xb"><i style="width:${st[k] >= 10 ? 100 : pct(s.exp?.[k] ?? 0, BALANCE.expPerLevel(st[k]))}"></i></span></div>`).join("")}</div></div>
+    ${s.status !== "dead" ? gearSelects(s) : ""}
+    ${s.status !== "dead" && state.phase === "day" ? `<div class="sec"><h4>지원 조치 <span class="sub">오늘 남은 횟수</span></h4><div class="sup">
+      <button data-act="support" data-kind="heal" data-id="${s.id}" ${state.support.heal > 0 && s.hp < G.maxHp(s) ? "" : "disabled"}>응급 치료 <b>${state.support.heal}</b></button>
+      <button data-act="support" data-kind="calm" data-id="${s.id}" ${state.support.calm > 0 && (s.san < G.maxSan(s) || s.status === "panic") ? "" : "disabled"}>진정 처치 <b>${state.support.calm}</b></button>
+    </div></div>` : ""}
     ${s.status === "fighting" ? `<div class="sec"><button data-act="recall" data-id="${s.id}" style="width:100%">후퇴</button></div>` : ""}
     ${G.isAvailable(s) ? `<div class="sec"><p class="hint" style="margin:0">격리실을 눌러 작업을 지시하세요.</p></div>` : ""}`;
+}
+
+function gearSelects(s) {
+  const opt = (kind) => {
+    const items = state.armory.filter((it) => it.kind === kind);
+    if (!items.length) return `<span class="hint">추출한 ${kind === "weapon" ? "무기" : "방호복"} 없음</span>`;
+    return `<select data-equip="${kind}" data-id="${s.id}"><option value="">없음</option>${items.map((it) => {
+      const owner = state.staff.find((o) => o[kind] === it.id && o.id !== s.id);
+      return `<option value="${it.id}" ${s[kind] === it.id ? "selected" : ""}>${esc(it.name)}${owner ? ` (${esc(owner.name)})` : ""}</option>`;
+    }).join("")}</select>`;
+  };
+  return `<div class="sec"><h4>장비</h4><div class="eq"><span>무기</span>${opt("weapon")}<span>방호복</span>${opt("suit")}</div>
+    <p class="hint">진압 공격력 ${G.attackPower(state, s).toFixed(1)}/초</p></div>`;
 }
 
 function renderPanel() {
@@ -332,6 +408,7 @@ function renderPanel() {
   }
   p.hidden = !html;
   p.className = "ui box";
+  if (p.contains(document.activeElement) && document.activeElement.tagName === "SELECT") return; // 고르는 중엔 다시 그리지 않음
   setHTML(p, html);
 }
 
@@ -422,6 +499,10 @@ function renderModal() {
         <span><span class="sub">수용 완료</span><b>${esc(acc.code)} ${esc(acc.name)}</b></span></div>` : "";
     setHTML(m, `<div class="dialog dayend"><div class="dh"><h1>${state.day}일차 업무 종료</h1>
         <span class="wallet">보유 ${esc(WORLD.currencyName)} <b>${state.currency}</b></span></div>
+      <div class="summary">
+        <span>수집 <b>${state.dayData}</b> / ${state.quota}</span><span>작업 <b>${state.dayStats.works}</b>회 (좋음 ${state.dayStats.good})</span>
+        <span>격리 실패 <b>${state.dayStats.breaches}</b></span><span>긴급 미이행 <b>${state.dayStats.alertsMissed}</b></span>
+        <span class="${state.dayStats.deaths ? "bad" : ""}">사망 <b>${state.dayStats.deaths}</b></span></div>
       ${choices ? `<h2>신규 수용 개체 · 하나를 고르세요</h2><div class="choices">${choices}</div>`
         : accepted || `<p class="hint">더 이상 수용할 개체가 없습니다.</p>`}
       <h2>직원 강화</h2>
@@ -485,6 +566,8 @@ function act(el) {
       break;
     }
     case "recall": G.recall(state, id); break;
+    case "buy": G.buyGear(state, cell, el.dataset.kind); break;
+    case "support": G.useSupport(state, el.dataset.kind, id); break;
     case "doc": ui.doc = cell; renderModal(); break;
     case "closeDoc": ui.doc = null; renderModal(); break;
     case "endDay": if (G.canEndDay(state)) { G.endDay(state); G.save(state); } break;
@@ -581,6 +664,13 @@ document.addEventListener("input", (ev) => {
   if (!ui.edit) return;
   if (ev.target.id === "ed-name") ui.edit.draft.name = ev.target.value;
   if (ev.target.id === "ed-memo") ui.edit.draft.memo = ev.target.value;
+});
+document.addEventListener("change", (ev) => {
+  const k = ev.target.dataset?.equip;
+  if (!k) return;
+  G.equip(state, Number(ev.target.dataset.id), k, ev.target.value ? Number(ev.target.value) : null);
+  ev.target.blur();
+  renderPanel();
 });
 document.addEventListener("change", async (ev) => {
   if (ev.target.id !== "ed-file" || !ui.edit) return;

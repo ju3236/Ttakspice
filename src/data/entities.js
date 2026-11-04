@@ -12,6 +12,8 @@
 //  stability    : 안정도 최대치. 0이 되면 격리 실패(탈출)
 //  prefs        : 작업 종류별 선호도 (high/mid/low/none)
 //  breach       : 탈출 시 전투 능력 { hp, attack, interval(초) }
+//  gear         : 장비 (선택). { weapon: { name, cost, atk }, suit: { name, cost, body, mind } }
+//                 빠진 값은 등급으로 자동 계산. body/mind 는 받는 피해 감소율(0~1)
 //  traits       : 특수 규칙 (아래 'TRAITS' 참고, 선택)
 //  image        : 이미지 경로 (선택, 없으면 config.js 의 DEFAULT_ENTITY_IMAGE)
 //  docs         : 연구 단계별로 공개되는 문서. 작업 횟수가 need 이상이면 해금
@@ -28,6 +30,7 @@ export const ENTITIES = [
     stability: 3,
     prefs: { observe: "high", maintain: "mid", commune: "mid", restrain: "low" },
     breach: { hp: 40, attack: 3, interval: 2 },
+    gear: { weapon: { name: "기다림의 심지" }, suit: { name: "황동 갓 외투" } },
     traits: [],
     docs: [
       { need: 0, text: "구식 황동 등불. 연료 없이 3년째 타오르고 있다." },
@@ -49,6 +52,7 @@ export const ENTITIES = [
     stability: 3,
     prefs: { observe: "mid", maintain: "low", commune: "high", restrain: "none" },
     breach: { hp: 70, attack: 5, interval: 2 },
+    gear: { weapon: { name: "음표 지휘봉" }, suit: { name: "합창단 교복" } },
     traits: ["lonely"],
     docs: [
       { need: 0, text: "아무도 없는 교실 모형에서 아이들의 노랫소리가 들린다." },
@@ -66,6 +70,7 @@ export const ENTITIES = [
     stability: 2,
     prefs: { observe: "low", maintain: "high", commune: "none", restrain: "mid" },
     breach: { hp: 140, attack: 9, interval: 1.6 },
+    gear: { weapon: { name: "재봉 가위" }, suit: { name: "누빈 앞치마" } },
     traits: ["hungry"],
     docs: [
       { need: 0, text: "천 조각을 이어 붙인 인간형 개체. 항상 식탁에 앉아 있다." },
@@ -83,6 +88,7 @@ export const ENTITIES = [
     stability: 4,
     prefs: { observe: "high", maintain: "low", commune: "mid", restrain: "mid" },
     breach: { hp: 60, attack: 4, interval: 1.5 },
+    gear: { weapon: { name: "물거울 단도" }, suit: { name: "반사 망토" } },
     traits: ["mirror"],
     docs: [
       { need: 0, text: "들여다보면 바닥 대신 자기 얼굴만 보이는 우물." },
@@ -99,6 +105,7 @@ export const ENTITIES = [
     stability: 2,
     prefs: { observe: "mid", maintain: "none", commune: "low", restrain: "high" },
     breach: { hp: 220, attack: 14, interval: 1.4 },
+    gear: { weapon: { name: "붉은 인연" }, suit: { name: "실타래 코트" } },
     traits: ["binding"],
     docs: [
       { need: 0, text: "스스로 풀리고 감기는 붉은 실. 끝이 어디에도 묶여 있지 않다." },
@@ -116,6 +123,7 @@ export const ENTITIES = [
     stability: 4,
     prefs: { observe: "mid", maintain: "high", commune: "high", restrain: "low" },
     breach: { hp: 30, attack: 2, interval: 2.5 },
+    gear: { weapon: { name: "젖은 도장" }, suit: { name: "투명 우비" } },
     traits: ["healer"],
     docs: [
       { need: 0, text: "젖은 우비를 입은 접수원. '예약하셨나요?'라고만 묻는다." },

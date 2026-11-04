@@ -43,6 +43,13 @@ export const BALANCE = {
   maxStaff: 10,
   breachLimit: 3,           // 동시에 탈출한 개체가 이 수 이상이면 시설 붕괴(게임 오버)
   timePerDay: 300,          // 하루 제한 시간(게임 초)
+  // 할당량이 이 비율에 도달할 때마다 '긴급 작업 경보'가 울림
+  alertThresholds: [0.3, 0.6, 0.9],
+  alertTime: 50,            // 경보 후 작업해야 하는 시간(게임 초)
+  // 작업하면 해당 능력치 경험치가 쌓임. 현재 수치 lv 에서 다음 수치까지 필요한 양
+  expPerLevel: (lv) => 20 + lv * 12,
+  // 하루에 쓸 수 있는 관리자 지원 조치 횟수
+  support: { heal: 2, calm: 2 },
 };
 
 // ===== 이미지 =====
